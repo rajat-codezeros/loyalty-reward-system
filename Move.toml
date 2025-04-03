@@ -1,0 +1,16 @@
+[package]
+name = "loyalty-reward-system"
+version = "1.0.0"
+authors = []
+
+[addresses]
+my_addr = "0x5fdc361fd29449d5e79c3edcf259a2d8ca3206b9a12e4f40ada0127b177df9f9"
+
+[dev-addresses]
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "mainnet"
+subdir = "aptos-framework"
+
+[dev-dependencies]
