@@ -146,25 +146,29 @@ module my_addr::loyalty_reward_system {
             | customer | {
                 if (is_customer_exists(admin_data.customer_addresses, customer)) {
                     let address_vector = table::borrow_mut(&mut customer_objects.object_addresses, customer);
-                    let j = 0;
 
-                    while (j < vector::length(&address_vector.addresses)) {
-                        let token_addr = *vector::borrow(&address_vector.addresses, j);
-                        
-                        if (exists<LoyaltyToken>(token_addr)) {
-                            let loyalty_token = borrow_global_mut<LoyaltyToken>(token_addr);
+                    vector::for_each (
+                        address_vector.addresses,
+                        | token_addr | {
+                            if (exists<LoyaltyToken>(token_addr)) {
+                                let loyalty_token = borrow_global_mut<LoyaltyToken>(token_addr);
 
-                            if (current_time > loyalty_token.expiry) {
-                                let balance = &mut loyalty_token.balance;
-                                let amount = coin::value(balance);
-                                let coins = coin::extract(balance, amount);
-                                coin::burn(coins, &admin_data.burn_cap);
-                                
-                                vector::remove(&mut address_vector.addresses, j);
+                                if (current_time > loyalty_token.expiry) {
+                                    let balance = &mut loyalty_token.balance;
+                                    let amount = coin::value(balance);
+                                    let coins = coin::extract(balance, amount);
+                                    coin::burn(coins, &admin_data.burn_cap);
+
+                                    let (found, index) = vector::index_of(&mut address_vector.addresses, &token_addr);
+                                    if (found) {
+                                        vector::remove(&mut address_vector.addresses, index);
+                                    }
+                                    
+                                };
                             };
-                        };
-                        j = j + 1;
-                    };
+                        }
+                    );
+
                     // remove customer if no tokens left
                     if (vector::is_empty(&address_vector.addresses)) {
                         table::remove(&mut customer_objects.object_addresses, customer);
@@ -188,27 +192,44 @@ module my_addr::loyalty_reward_system {
         };
 
         let address_vector = table::borrow_mut(&mut customer_objects.object_addresses, customer_addr);
-        let length = vector::length(&address_vector.addresses);
-        let i = 0;
 
-        while (i < length) {
-            let object_addr = *vector::borrow(&address_vector.addresses, i);
+        vector::for_each (
+            address_vector.addresses,
+            | object_addr | {
+                if (exists<LoyaltyToken>(object_addr)) {
+                    let loyalty_token = borrow_global_mut<LoyaltyToken>(object_addr);
+                    let token_obj = object::address_to_object<LoyaltyToken>(object_addr);
 
-            if (exists<LoyaltyToken>(object_addr)) {
-                let loyalty_token = borrow_global_mut<LoyaltyToken>(object_addr);
-                let token_obj = object::address_to_object<LoyaltyToken>(object_addr);
-
-                if ((object::owner(token_obj) == customer_addr) && (timestamp::now_seconds() < loyalty_token.expiry)) {
-                    let amount = coin::value(&loyalty_token.balance);
-                    available = available + amount;
-                    if (amount > 0) {
-                        let tokens = coin::extract(&mut loyalty_token.balance, amount);
-                        coin::deposit(customer_addr, tokens);
-                    }
+                    if ((object::owner(token_obj) == customer_addr) && (timestamp::now_seconds() < loyalty_token.expiry)) {
+                        let amount = coin::value(&loyalty_token.balance);
+                        available = available + amount;
+                        if (amount > 0) {
+                            let tokens = coin::extract(&mut loyalty_token.balance, amount);
+                            coin::deposit(customer_addr, tokens);
+                        }
+                    };
                 };
-            };
-            i = i + 1;
-        };
+            }
+        );
+
+        // while (i < length) {
+        //     let object_addr = *vector::borrow(&address_vector.addresses, i);
+
+        //     if (exists<LoyaltyToken>(object_addr)) {
+        //         let loyalty_token = borrow_global_mut<LoyaltyToken>(object_addr);
+        //         let token_obj = object::address_to_object<LoyaltyToken>(object_addr);
+
+        //         if ((object::owner(token_obj) == customer_addr) && (timestamp::now_seconds() < loyalty_token.expiry)) {
+        //             let amount = coin::value(&loyalty_token.balance);
+        //             available = available + amount;
+        //             if (amount > 0) {
+        //                 let tokens = coin::extract(&mut loyalty_token.balance, amount);
+        //                 coin::deposit(customer_addr, tokens);
+        //             }
+        //         };
+        //     };
+        //     i = i + 1;
+        // };
         available
     }
 
