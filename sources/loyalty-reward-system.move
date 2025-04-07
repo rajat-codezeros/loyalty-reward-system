@@ -211,25 +211,6 @@ module my_addr::loyalty_reward_system {
                 };
             }
         );
-
-        // while (i < length) {
-        //     let object_addr = *vector::borrow(&address_vector.addresses, i);
-
-        //     if (exists<LoyaltyToken>(object_addr)) {
-        //         let loyalty_token = borrow_global_mut<LoyaltyToken>(object_addr);
-        //         let token_obj = object::address_to_object<LoyaltyToken>(object_addr);
-
-        //         if ((object::owner(token_obj) == customer_addr) && (timestamp::now_seconds() < loyalty_token.expiry)) {
-        //             let amount = coin::value(&loyalty_token.balance);
-        //             available = available + amount;
-        //             if (amount > 0) {
-        //                 let tokens = coin::extract(&mut loyalty_token.balance, amount);
-        //                 coin::deposit(customer_addr, tokens);
-        //             }
-        //         };
-        //     };
-        //     i = i + 1;
-        // };
         available
     }
 
