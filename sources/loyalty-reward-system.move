@@ -6,10 +6,11 @@ module my_addr::loyalty_reward_system {
     use aptos_framework::coin;
     use aptos_framework::timestamp;
     use aptos_framework::object::{Self, ObjectCore};
+    use aptos_framework::account;
 
-    const NOT_AUTHORISED: u64 = 1;
-    const NO_TOKENS_FOR_CUSTOMER: u64 = 2;
-    const NO_EXPIRED_TOKENS: u64 = 3;
+    const ENOT_AUTHORISED: u64 = 1;
+    const ENO_TOKENS_FOR_CUSTOMER: u64 = 2;
+    const ENO_EXPIRED_TOKENS: u64 = 3;
 
     struct LoyaltyCoin {}
 
@@ -34,7 +35,7 @@ module my_addr::loyalty_reward_system {
     }
 
     fun assert_is_admin(addr: address) {
-        assert!(addr == @my_addr, NOT_AUTHORISED);
+        assert!(addr == @my_addr, ENOT_AUTHORISED);
     }
 
     fun init_module(admin: &signer) {
@@ -59,15 +60,17 @@ module my_addr::loyalty_reward_system {
     }
 
     public entry fun mint_tokens(admin: &signer, customer: address, amount: u64, expiry_days: u64) acquires AdminData, CustomerObjects {
-        assert_is_admin(address_of(admin));
+        let admin_addr = address_of(admin);
+        assert_is_admin(admin_addr);
 
-        let constructor_ref = object::create_object(address_of(admin));
+        let constructor_ref = object::create_object(admin_addr);
         let object_signer = object::generate_signer(&constructor_ref);
 
-        let mint_cap = &borrow_global<AdminData>(address_of(admin)).mint_cap;
+        let admin_data = borrow_global<AdminData>(admin_addr);
+        let customer_objects = &mut borrow_global_mut<CustomerObjects>(@my_addr).object_addresses;
         let expiry_timestamp = timestamp::now_seconds() + (expiry_days * 86400);
 
-        let tokens = coin::mint<LoyaltyCoin>(amount, mint_cap);
+        let tokens = coin::mint<LoyaltyCoin>(amount, &admin_data.mint_cap);
 
         move_to(&object_signer, LoyaltyToken {
             balance: tokens,
@@ -77,21 +80,21 @@ module my_addr::loyalty_reward_system {
         let loyalty_object = object::object_from_constructor_ref<ObjectCore>(&constructor_ref);
         let object_addr = object::object_address(&loyalty_object);
 
-        if(!vector::contains(&borrow_global<AdminData>(@my_addr).customer_addresses, &customer)) {
+        if(!is_customer_exists(admin_data.customer_addresses, customer)) {
             vector::push_back(
                 &mut borrow_global_mut<AdminData>(@my_addr).customer_addresses,
                 customer
             );
         };
 
-        if (!table::contains(&borrow_global<CustomerObjects>(@my_addr).object_addresses, customer)) {
+        if (!is_customer_object_exists(customer_objects, customer)) {
             table::add(
-                &mut borrow_global_mut<CustomerObjects>(@my_addr).object_addresses,
+                customer_objects,
                 customer,
                 ObjectAddresses { addresses: vector::empty() }
             );
         };
-        let customer_obj_addresses = table::borrow_mut(&mut borrow_global_mut<CustomerObjects>(@my_addr).object_addresses, customer);
+        let customer_obj_addresses = table::borrow_mut(customer_objects, customer);
         vector::push_back(&mut customer_obj_addresses.addresses, object_addr);
 
         object::transfer(admin, loyalty_object, customer);
@@ -101,29 +104,28 @@ module my_addr::loyalty_reward_system {
         let customer_addr = address_of(customer);
         let customer_objects = borrow_global_mut<CustomerObjects>(@my_addr);
 
-        assert!(table::contains(&customer_objects.object_addresses, customer_addr), NO_TOKENS_FOR_CUSTOMER);
+        assert!(is_customer_object_exists(&customer_objects.object_addresses, customer_addr), ENO_TOKENS_FOR_CUSTOMER);
 
         let address_vector = table::borrow_mut(&mut customer_objects.object_addresses, customer_addr);
         let length = vector::length(&address_vector.addresses);
-        let i = 0;
 
-        while (i < length) {
-            let object_addr = *vector::borrow(&address_vector.addresses, i);
+        vector::for_each (
+            address_vector.addresses,
+            |object_addr| {
+                if (exists<LoyaltyToken>(object_addr)) {
+                    let loyalty_token = borrow_global_mut<LoyaltyToken>(object_addr);
+                    let token_obj = object::address_to_object<LoyaltyToken>(object_addr);
 
-            if (exists<LoyaltyToken>(object_addr)) {
-                let loyalty_token = borrow_global_mut<LoyaltyToken>(object_addr);
-                let token_obj = object::address_to_object<LoyaltyToken>(object_addr);
-
-                if ((object::owner(token_obj) == customer_addr) && (timestamp::now_seconds() < loyalty_token.expiry)) {
-                    let amount = coin::value(&loyalty_token.balance);
-                    if (amount > 0) {
-                        let tokens = coin::extract(&mut loyalty_token.balance, amount);
-                        coin::deposit(customer_addr, tokens);
-                    }
+                    if ((object::owner(token_obj) == customer_addr) && (timestamp::now_seconds() < loyalty_token.expiry)) {
+                        let amount = coin::value(&loyalty_token.balance);
+                        if (amount > 0) {
+                            let tokens = coin::extract(&mut loyalty_token.balance, amount);
+                            coin::deposit(customer_addr, tokens);
+                        }
+                    };
                 };
-            };
-            i = i + 1;
-        }
+            }
+        );
     }
 
     public entry fun withdraw_expired_tokens(admin: &signer) acquires LoyaltyToken, CustomerObjects, AdminData {
@@ -134,12 +136,12 @@ module my_addr::loyalty_reward_system {
         let length = vector::length(&admin_data.customer_addresses);
         let i = 0;
 
-        assert!(length > 0, NO_EXPIRED_TOKENS);
+        assert!(length > 0, ENO_EXPIRED_TOKENS);
 
         while (i < length) {
             let customer = *vector::borrow(&admin_data.customer_addresses, i);
 
-            if (table::contains(&customer_objects.object_addresses, customer)) {
+            if (is_customer_exists(admin_data.customer_addresses, customer)) {
                 let address_vector = table::borrow_mut(&mut customer_objects.object_addresses, customer);
                 let j = 0;
 
@@ -203,6 +205,14 @@ module my_addr::loyalty_reward_system {
             i = i + 1;
         };
         available
+    }
+
+    fun is_customer_exists(customer_addresses: vector<address>, customer: address): bool {
+        vector::contains(&customer_addresses, &customer)
+    }
+
+    fun is_customer_object_exists(customers: &Table<address, ObjectAddresses>, customer: address): bool {
+        table::contains(customers, customer)
     }
 
     #[test_only]
@@ -275,7 +285,7 @@ module my_addr::loyalty_reward_system {
     }
 
     #[test(admin=@my_addr, customer=@0x123, customer2=@0x345, aptos_framework=@aptos_framework)]
-    #[expected_failure(abort_code = NOT_AUTHORISED)]
+    #[expected_failure(abort_code = ENOT_AUTHORISED)]
     public entry fun fail_mint_tokens(admin: &signer, customer: &signer, aptos_framework: &signer)
         acquires CustomerObjects, AdminData {
         
@@ -293,7 +303,7 @@ module my_addr::loyalty_reward_system {
     }
 
     #[test(admin=@my_addr, customer=@0x123, customer2=@0x345, aptos_framework=@aptos_framework)]
-    #[expected_failure(abort_code = NOT_AUTHORISED)]
+    #[expected_failure(abort_code = ENOT_AUTHORISED)]
     public entry fun fail_unauthorised_expired_tokens_withdraw(admin: &signer, customer: &signer, aptos_framework: &signer)
         acquires LoyaltyToken, CustomerObjects, AdminData {
         
@@ -315,7 +325,7 @@ module my_addr::loyalty_reward_system {
     }
 
     #[test(admin=@my_addr, customer=@0x123, customer2=@0x345, aptos_framework=@aptos_framework)]
-    #[expected_failure(abort_code = NO_TOKENS_FOR_CUSTOMER)]
+    #[expected_failure(abort_code = ENO_TOKENS_FOR_CUSTOMER)]
     public entry fun fail_customer_redeem(admin: &signer, customer: &signer, aptos_framework: &signer)
         acquires LoyaltyToken, CustomerObjects {
         
@@ -332,9 +342,9 @@ module my_addr::loyalty_reward_system {
         redeem_available_tokens(customer);
     }
 
-    #[test(admin=@my_addr, customer=@0x123, customer2=@0x345, aptos_framework=@aptos_framework)]
-    #[expected_failure(abort_code = NO_EXPIRED_TOKENS)]
-    public entry fun fail_expired_tokens_withdraw(admin: &signer, customer: &signer, aptos_framework: &signer)
+    #[test(admin=@my_addr, aptos_framework=@aptos_framework)]
+    #[expected_failure(abort_code = ENO_EXPIRED_TOKENS)]
+    public entry fun fail_expired_tokens_withdraw(admin: &signer, aptos_framework: &signer)
         acquires LoyaltyToken, CustomerObjects, AdminData {
         
         account::create_account_for_test(address_of(admin));
