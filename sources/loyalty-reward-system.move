@@ -8,8 +8,13 @@ module my_addr::loyalty_reward_system {
     use aptos_framework::object::{Self, ObjectCore};
     use aptos_framework::account;
 
+    /// When the caller is not authorised to perfom the action
     const ENOT_AUTHORISED: u64 = 1;
+
+    /// When no tokens are available for the customer
     const ENO_TOKENS_FOR_CUSTOMER: u64 = 2;
+
+    /// When there are no expired tokens to withdraw
     const ENO_EXPIRED_TOKENS: u64 = 3;
 
     struct LoyaltyCoin {}
@@ -107,7 +112,6 @@ module my_addr::loyalty_reward_system {
         assert!(is_customer_object_exists(&customer_objects.object_addresses, customer_addr), ENO_TOKENS_FOR_CUSTOMER);
 
         let address_vector = table::borrow_mut(&mut customer_objects.object_addresses, customer_addr);
-        let length = vector::length(&address_vector.addresses);
 
         vector::for_each (
             address_vector.addresses,
@@ -134,43 +138,44 @@ module my_addr::loyalty_reward_system {
         let customer_objects = borrow_global_mut<CustomerObjects>(@my_addr);
         let current_time = timestamp::now_seconds();
         let length = vector::length(&admin_data.customer_addresses);
-        let i = 0;
 
         assert!(length > 0, ENO_EXPIRED_TOKENS);
 
-        while (i < length) {
-            let customer = *vector::borrow(&admin_data.customer_addresses, i);
+        vector::for_each (
+            admin_data.customer_addresses,
+            | customer | {
+                if (is_customer_exists(admin_data.customer_addresses, customer)) {
+                    let address_vector = table::borrow_mut(&mut customer_objects.object_addresses, customer);
+                    let j = 0;
 
-            if (is_customer_exists(admin_data.customer_addresses, customer)) {
-                let address_vector = table::borrow_mut(&mut customer_objects.object_addresses, customer);
-                let j = 0;
+                    while (j < vector::length(&address_vector.addresses)) {
+                        let token_addr = *vector::borrow(&address_vector.addresses, j);
+                        
+                        if (exists<LoyaltyToken>(token_addr)) {
+                            let loyalty_token = borrow_global_mut<LoyaltyToken>(token_addr);
 
-                while (j < vector::length(&address_vector.addresses)) {
-                    let token_addr = *vector::borrow(&address_vector.addresses, j);
-                    
-                    if (exists<LoyaltyToken>(token_addr)) {
-                        let loyalty_token = borrow_global_mut<LoyaltyToken>(token_addr);
-
-                        if (current_time > loyalty_token.expiry) {
-                            let balance = &mut loyalty_token.balance;
-                            let amount = coin::value(balance);
-                            let coins = coin::extract(balance, amount);
-                            coin::burn(coins, &admin_data.burn_cap);
-                            
-                            vector::remove(&mut address_vector.addresses, j);
+                            if (current_time > loyalty_token.expiry) {
+                                let balance = &mut loyalty_token.balance;
+                                let amount = coin::value(balance);
+                                let coins = coin::extract(balance, amount);
+                                coin::burn(coins, &admin_data.burn_cap);
+                                
+                                vector::remove(&mut address_vector.addresses, j);
+                            };
                         };
+                        j = j + 1;
                     };
-                    j = j + 1;
+                    // remove customer if no tokens left
+                    if (vector::is_empty(&address_vector.addresses)) {
+                        table::remove(&mut customer_objects.object_addresses, customer);
+                        let (found, index) = vector::index_of(&mut admin_data.customer_addresses, &customer);
+                        if (found) {
+                            vector::remove(&mut admin_data.customer_addresses, index);
+                        }
+                    }
                 };
-                // remove customer if no tokens left
-                if (vector::is_empty(&address_vector.addresses)) {
-                    table::remove(&mut customer_objects.object_addresses, customer);
-                    vector::remove(&mut admin_data.customer_addresses, i);
-                    continue;
-                }
-            };
-            i = i + 1;
-        };
+            }
+        );
     }
 
     #[view]
